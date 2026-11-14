@@ -1,0 +1,24 @@
+threads = 10, N = 301, L = 40, sweeps = 10000 + 20000
+true sigma = 0.1  (true beta = 100.0), seed = 42, data_seed = 4
+
+K=1: F_min =    95.616 at beta =    10.62 (sigma_hat = 0.3068), min exchange rate = 0.652, 1.0 s
+K=2: F_min =  -169.894 at beta =    65.43 (sigma_hat = 0.1236), min exchange rate = 0.671, 1.6 s
+K=3: F_min =  -243.439 at beta =   119.94 (sigma_hat = 0.0913), min exchange rate = 0.587, 2.2 s
+K=4: F_min =  -243.364 at beta =   119.94 (sigma_hat = 0.0913), min exchange rate = 0.336, 2.7 s
+K=5: F_min =  -242.377 at beta =   119.94 (sigma_hat = 0.0913), min exchange rate = 0.103, 3.2 s
+
+Delta F (K) = F_min(K) - min_K F_min(K):
+  K=1:  339.055
+  K=2:   73.546
+  K=3:    0.000
+  K=4:    0.075
+  K=5:    1.062
+
+argmin K = 3, beta_hat = 119.94
+posterior mean ± sd at beta_hat (peaks sorted by mu):
+  peak 0: a = 0.969±0.031, mu = 0.993±0.010, b = 45.6±4.6
+  peak 1: a = 0.795±0.025, mu = 1.396±0.013, b = 38.7±5.0
+  peak 2: a = 1.193±0.019, mu = 2.206±0.004, b = 25.4±1.0
+acceptance (a, mu, b) at beta_hat: [0.39, 0.39, 0.38]
+
+wrote free_energy.csv

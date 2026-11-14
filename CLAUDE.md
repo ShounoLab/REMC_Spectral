@@ -12,7 +12,7 @@
 - テスト: `cargo test`（`[profile.test]` で最適化済み．結合テストを含め数秒）
 - 整形・静的検査: `cargo fmt --all` / `cargo clippy --all-targets -- -D warnings`
 - ドキュメント: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
-- デモ実行: `cargo run --release -- [K_max] [n_sample] [seed]`（スレッド数は `RAYON_NUM_THREADS`）
+- デモ実行: `cargo run --release -- [K_max] [n_sample] [seed] [data_seed]`（スレッド数は `RAYON_NUM_THREADS`）
 
 変更を終えたら fmt・clippy・test がすべて通ることを確認する（CI と同じ条件）．
 
@@ -35,12 +35,22 @@
 - 交換の受理確率は `exp((β_{l+1} - β_l)(E_{l+1} - E_l))`．偶数ペアと奇数ペアを交互に試す．
 - 残差 `resid`，寄与 `contrib`，`sse` は差分更新で常に整合させる．`recompute` で定期的に誤差をリセットする．
 - ステップ幅の適応は burn-in 中のみ．本サンプリング中に変えると詳細釣り合いが崩れる．
+- 逆温度列の適応（`adapt_ladder`）は burn-in の前半のみ．後半は固定した列で平衡化させる．β_0 = 0 と最大の β は動かさない．
+- 格子点の間の log Z（`log_z_at`）は隣接比と同じ推定量を使い，格子点で `log_z` と一致させる．
 - 乱数はスロットごとの `ChaCha8Rng` ストリームだけを使う．`thread_rng()` や共有 RNG を並列部分に持ち込まない
   （スレッド数に依存せずビット単位で再現することをテストで保証している）．
 
 サンプラーや推定器に手を入れたら，`incremental_update_matches_recompute`，
-`result_is_independent_of_thread_count`，`k1_free_energy_matches_quadrature` が通ることを必ず確認する．
+`result_is_independent_of_thread_count`，`k1_free_energy_matches_quadrature`，
+`k1_free_energy_matches_quadrature_with_adapted_ladder` が通ることを必ず確認する．
 テストの許容誤差を緩めて通すのは禁止．通らない場合は原因を報告する．
+
+## 実験記録とノート
+
+- 実験を実行したら `logs/YYYY-MM-DD_名前/` に目的・コード版・コマンド・要約表・所見（`README.md`）と生出力を残し，
+  `logs/README.md` の一覧に 1 行足す．デモは CSV をカレントディレクトリに書くので，作業用ディレクトリで実行する．
+- 会話で出たアイディアや仮説は `notes/` にテーマごとにまとめる．出どころ（[利用者]/[Claude]/[両者]）と
+  状態（未着手/検討中/実装済み/却下）を付ける．書き方は `notes/README.md`．
 
 ## コーディング規約
 

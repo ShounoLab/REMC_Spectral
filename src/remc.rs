@@ -173,7 +173,13 @@ pub struct Config {
     pub recompute_interval: usize,
     pub thin: usize,
     pub seed: u64,
+    /// 逆温度列を調整する間隔（スイープ数）．0 なら調整しない．
+    /// 調整は burn-in の前半だけで行い，後半は固定した列のもとで平衡化させる（[`adapt_ladder`]）．
+    pub ladder_interval: usize,
 }
+
+/// [`adapt_ladder`] の利得 κ．交換率の偏差 0.1 につき間隔を約 10 % 伸縮させる．
+const LADDER_GAIN: f64 = 1.0;
 
 pub struct RemcResult {
     pub betas: Vec<f64>,
@@ -193,6 +199,37 @@ pub fn ladder(l: usize, beta_min: f64, beta_max: f64) -> Vec<f64> {
     std::iter::once(0.0)
         .chain((0..l - 1).map(|i| beta_min * gamma.powi(i as i32)))
         .collect()
+}
+
+/// 隣接ペアの交換受理率 `rates`（長さ L - 1）がそろうように逆温度列を調整する．
+///
+/// β_0 = 0 と最高の逆温度 β_{L-1} は固定する．間隔 d_l = β_{l+1} - β_l を
+///   log d_l ← log d_l + κ (A_l - Ā)，Ā は A_l の平均
+/// で更新したあと，Σ d_l = β_{L-1} となるよう全体を定数倍する．
+/// 受理率の高いペアは間隔が広がり，低いペア（交換のボトルネック）は狭まる．
+/// 間隔は常に正なので列の単調性は保たれる．
+///
+/// 列を変えると詳細釣り合いの前提が崩れるので，burn-in 中にだけ呼ぶこと．
+pub fn adapt_ladder(betas: &[f64], rates: &[f64], gain: f64) -> Vec<f64> {
+    assert_eq!(betas[0], 0.0);
+    assert_eq!(rates.len() + 1, betas.len());
+    let beta_top = betas[betas.len() - 1];
+    let mean = rates.iter().sum::<f64>() / rates.len() as f64;
+    let gaps: Vec<f64> = betas
+        .windows(2)
+        .zip(rates)
+        .map(|(w, &a)| (w[1] - w[0]) * (gain * (a - mean)).exp())
+        .collect();
+    let scale = beta_top / gaps.iter().sum::<f64>();
+    let mut out: Vec<f64> = std::iter::once(0.0)
+        .chain(gaps.iter().scan(0.0, |acc, &d| {
+            *acc += d * scale;
+            Some(*acc)
+        }))
+        .collect();
+    // 丸め誤差で端がずれないよう，最高の逆温度は元の値に戻す
+    *out.last_mut().unwrap() = beta_top;
+    out
 }
 
 /// 隣接ペアの交換．parity で偶数ペア (0,1),(2,3),… と奇数ペア (1,2),(3,4),… を交互に試す
@@ -222,7 +259,7 @@ fn exchange(
 
 /// K 本のピークをもつモデルで交換モンテカルロを実行する
 pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcResult {
-    let betas = ladder(cfg.n_replica, cfg.beta_min, cfg.beta_max);
+    let mut betas = ladder(cfg.n_replica, cfg.beta_min, cfg.beta_max);
     let l_max = betas.len();
 
     // スロット l には (seed, stream = K * 2^20 + l) の独立ストリームを割り当てる
@@ -259,6 +296,23 @@ pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcR
         if t < cfg.burn_in {
             if (t + 1).is_multiple_of(cfg.adapt_interval) {
                 slots.iter_mut().for_each(|s| s.adapt(cfg.target_acc));
+            }
+            // 逆温度列の調整は burn-in の前半だけ．交換の統計はこの区間の窓ごとにリセットする．
+            if cfg.ladder_interval > 0
+                && t < cfg.burn_in / 2
+                && (t + 1).is_multiple_of(cfg.ladder_interval)
+            {
+                let rates: Vec<f64> = ex_acc
+                    .iter()
+                    .zip(&ex_tried)
+                    .map(|(&a, &m)| a as f64 / m.max(1) as f64)
+                    .collect();
+                betas = adapt_ladder(&betas, &rates, LADDER_GAIN);
+                for (s, &b) in slots.iter_mut().zip(&betas) {
+                    s.beta = b;
+                }
+                ex_acc.iter_mut().for_each(|v| *v = 0);
+                ex_tried.iter_mut().for_each(|v| *v = 0);
             }
             if t + 1 == cfg.burn_in {
                 // 本サンプリング開始時に統計をリセット
@@ -312,6 +366,60 @@ pub fn log_z(betas: &[f64], energies: &[Vec<f64>]) -> Vec<f64> {
         lz[l + 1] = lz[l] + log_mean_exp(energies[l].iter().map(move |&e| -d * e));
     }
     lz
+}
+
+/// 格子点以外の β での log Z(β)（0 ≤ β ≤ β_{L-1}）．
+///
+/// β_l ≤ β < β_{l+1} となる l をとり，スロット l のサンプルを再重み付けする:
+///   log Z(β) = log Z(β_l) + log ⟨exp(-(β - β_l) nE_n)⟩_{β_l}
+/// [`log_z`] の隣接比と同じ推定量なので，格子点では `lz` と一致し，β について連続になる．
+pub fn log_z_at(betas: &[f64], energies: &[Vec<f64>], lz: &[f64], beta: f64) -> f64 {
+    let top = betas.len() - 1;
+    assert!(
+        (0.0..=betas[top]).contains(&beta),
+        "beta = {beta} is outside the ladder"
+    );
+    // partition_point: β_l ≤ β を満たす l の個数（列は単調増加）
+    let l = betas.partition_point(|&b| b <= beta) - 1;
+    if l == top {
+        return lz[top];
+    }
+    let d = beta - betas[l];
+    lz[l] + log_mean_exp(energies[l].iter().map(move |&e| -d * e))
+}
+
+/// F(β) を β について最小化し，(β̂, F(β̂)) を返す（雑音精度の経験ベイズ推定）．
+///
+/// 格子上の最小点 β_{l̂} の両隣 [β_{l̂-1}, β_{l̂+1}] を対数等間隔の細かい格子で探索し，
+/// 格子点の間は [`log_z_at`] で補間する．β̂ の分解能が逆温度列の間隔に縛られなくなる．
+pub fn minimize_free_energy(
+    betas: &[f64],
+    energies: &[Vec<f64>],
+    lz: &[f64],
+    n: usize,
+) -> (f64, f64) {
+    const N_FINE: usize = 400;
+    let f = free_energy(betas, lz, n);
+    let (l_hat, _) = f
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap();
+    let top = betas.len() - 1;
+    let lo = betas[l_hat.saturating_sub(1).max(1)];
+    let hi = betas[(l_hat + 1).min(top)];
+    let (llo, lhi) = (lo.ln(), hi.ln());
+    let fine = (0..=N_FINE).map(|i| (llo + (lhi - llo) * i as f64 / N_FINE as f64).exp());
+    std::iter::once(betas[l_hat])
+        .chain(fine)
+        .map(|b| b.clamp(lo, hi))
+        .map(|b| {
+            let fb = 0.5 * n as f64 * (2.0 * std::f64::consts::PI / b).ln()
+                - log_z_at(betas, energies, lz, b);
+            (b, fb)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap()
 }
 
 /// ベイズ自由エネルギー（雑音精度 β の関数として）
@@ -373,7 +481,47 @@ mod tests {
             recompute_interval: 100,
             thin: 10,
             seed: 7,
+            ladder_interval: 0,
         }
+    }
+
+    #[test]
+    fn adapt_ladder_keeps_endpoints_and_narrows_bottleneck() {
+        let b = ladder(6, 1e-1, 1e2);
+        let rates = [0.7, 0.6, 0.1, 0.6, 0.7];
+        let b2 = adapt_ladder(&b, &rates, LADDER_GAIN);
+        assert_eq!(b2[0], 0.0);
+        assert_eq!(b2[5], b[5]);
+        assert!(b2.windows(2).all(|w| w[0] < w[1]));
+        // 受理率の低いペア (2, 3) の間隔は，他のペアに比べて相対的に狭まる
+        let ratio = |v: &[f64], l: usize| (v[l + 1] - v[l]) / (v[2] - v[1]);
+        assert!(ratio(&b2, 2) < ratio(&b, 2));
+        // 受理率がそろっていれば列は変わらない
+        let same = adapt_ladder(&b, &[0.5; 5], LADDER_GAIN);
+        assert!(same.iter().zip(&b).all(|(u, v)| (u - v).abs() <= 1e-12 * v));
+    }
+
+    /// 再重み付けによる log Z(β) が格子点で隣接比の積と一致し，格子点の間で連続であること
+    #[test]
+    fn log_z_at_agrees_with_ladder_at_grid_points() {
+        let (x, y, prior) = toy_data();
+        let res = run(&x, &y, 2, &prior, &small_config());
+        let lz = log_z(&res.betas, &res.energies);
+        for (&b, &z) in res.betas.iter().zip(&lz) {
+            assert!(
+                (log_z_at(&res.betas, &res.energies, &lz, b) - z).abs() <= 1e-9 * z.abs().max(1.0)
+            );
+        }
+        // β_{l+1} の直前から近づけたときも lz[l+1] に連続につながる
+        let l = 4;
+        let below = res.betas[l + 1] * (1.0 - 1e-12);
+        let z_below = log_z_at(&res.betas, &res.energies, &lz, below);
+        assert!((z_below - lz[l + 1]).abs() < 1e-6 * lz[l + 1].abs().max(1.0));
+        // 細かい格子で最小化した F は格子上の最小値以下
+        let f = free_energy(&res.betas, &lz, x.len());
+        let f_grid = f.iter().cloned().fold(f64::INFINITY, f64::min);
+        let (_, f_fine) = minimize_free_energy(&res.betas, &res.energies, &lz, x.len());
+        assert!(f_fine <= f_grid);
     }
 
     #[test]
@@ -409,21 +557,31 @@ mod tests {
         assert!((incremental - slot.chain.sse).abs() <= 1e-9 * slot.chain.sse.max(1.0));
     }
 
-    /// スレッド数を変えても結果がビット単位で一致すること
+    /// スレッド数を変えても結果がビット単位で一致すること（逆温度列の調整あり・なしの両方）
     #[test]
     fn result_is_independent_of_thread_count() {
         let (x, y, prior) = toy_data();
-        let cfg = small_config();
-        let run_with = |threads: usize| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
-                .install(|| run(&x, &y, 2, &prior, &cfg))
-        };
-        let r1 = run_with(1);
-        let r2 = run_with(3);
-        assert_eq!(r1.energies, r2.energies);
-        assert_eq!(r1.exchange_rate, r2.exchange_rate);
+        for ladder_interval in [0, 50] {
+            let cfg = Config {
+                ladder_interval,
+                ..small_config()
+            };
+            let run_with = |threads: usize| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap()
+                    .install(|| run(&x, &y, 2, &prior, &cfg))
+            };
+            let r1 = run_with(1);
+            let r2 = run_with(3);
+            assert_eq!(r1.betas, r2.betas);
+            assert_eq!(r1.energies, r2.energies);
+            assert_eq!(r1.exchange_rate, r2.exchange_rate);
+            if ladder_interval > 0 {
+                // 調整が実際に働いて列が初期値から動いていること
+                assert_ne!(r1.betas, ladder(cfg.n_replica, cfg.beta_min, cfg.beta_max));
+            }
+        }
     }
 }

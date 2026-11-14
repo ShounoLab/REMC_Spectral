@@ -17,10 +17,20 @@
 
 ## 使い方
 
-    cargo run --release -- [K_max=5] [n_sample=20000] [seed=42]
+    cargo run --release -- [K_max=5] [n_sample=20000] [seed=42] [data_seed=20120401]
+    # seed: 交換モンテカルロの乱数，data_seed: 人工データの雑音の乱数
     RAYON_NUM_THREADS=8 cargo run --release      # スレッド数の指定
 
 出力: `data.csv`（人工データ），`free_energy.csv`（K, β, F, ⟨nE⟩, 交換率）
+
+## 逆温度列の適応と β̂ の推定
+
+- `Config::ladder_interval` > 0 のとき，burn-in の前半でその間隔ごとに隣接交換率を測り，
+  交換率がそろうように逆温度列を動かす（`remc::adapt_ladder`）．β_0 = 0 と β の最大値は固定．
+  burn-in の後半と本サンプリングでは列を固定する．0 なら等比の列のまま．
+- `remc::log_z_at` は格子点の間の β で log Z(β) を再重み付けで求める
+  （log Z(β) = log Z(β_l) + log ⟨exp(-(β - β_l) nE_n)⟩_{β_l}）．
+  `remc::minimize_free_energy` はこれを使って F(β) を最小化し，β̂ を逆温度列の格子に縛られずに求める．
 
 ## 構成
 
@@ -33,7 +43,9 @@
 │   ├── remc.rs       交換モンテカルロ本体（差分残差更新，偶奇交換，自由エネルギー推定）＋単体テスト
 │   └── main.rs       デモ用バイナリ（K = 1..K_max の実行とモデル選択）
 ├── tests/
-│   └── free_energy.rs  結合テスト: K = 1 の自由エネルギーを格子数値積分と比較
+│   └── free_energy.rs  結合テスト: K = 1 の自由エネルギーを格子数値積分と比較（逆温度列の適応あり・なし）
+├── logs/              実験の記録（実験ごとのフォルダに要約と生出力）
+├── notes/             会話で出たアイディア・仮説・検討中の設計のまとめ
 ├── .github/workflows/ci.yml  fmt / clippy / doc / test（Linux・macOS）
 ├── CLAUDE.md          Claude Code 向けのプロジェクト説明と不変条件
 └── .claude/
@@ -49,4 +61,5 @@
     cargo doc --no-deps --open                   # API ドキュメント
 
 単体テストでは，差分更新した SSE が再計算値と一致すること，
-スレッド数を変えても結果がビット単位で一致することを確認している．
+スレッド数を変えても結果がビット単位で一致すること（逆温度列の適応あり・なし），
+再重み付けした log Z が格子点で隣接比の積と一致することを確認している．

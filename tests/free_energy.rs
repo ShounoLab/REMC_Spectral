@@ -7,7 +7,7 @@
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use remc_spectral::model::{synthesize, Peak, Prior};
-use remc_spectral::remc::{free_energy, log_z, run, Config};
+use remc_spectral::remc::{free_energy, log_z, log_z_at, run, Config};
 
 fn log_add(a: f64, b: f64) -> f64 {
     let m = a.max(b);
@@ -91,6 +91,7 @@ fn k1_free_energy_matches_quadrature() {
         recompute_interval: 1_000,
         thin: 10,
         seed: 11,
+        ladder_interval: 0,
     };
     let res = run(&x, &y, 1, &prior, &cfg);
     let f_mc = free_energy(&res.betas, &log_z(&res.betas, &res.energies), n);
@@ -108,5 +109,62 @@ fn k1_free_energy_matches_quadrature() {
             betas[j], f_mc[l], f_q[j], diff
         );
         assert!(diff < 0.3, "free energy mismatch at beta = {}", betas[j]);
+    }
+}
+
+/// 逆温度列を burn-in 中に調整した場合も，格子点と格子点の間（再重み付け）の両方で
+/// 自由エネルギーが数値積分と一致すること
+#[test]
+fn k1_free_energy_matches_quadrature_with_adapted_ladder() {
+    let n = 151;
+    let x: Vec<f64> = (0..n).map(|i| 3.0 * i as f64 / (n - 1) as f64).collect();
+    let truth = [Peak {
+        a: 1.0,
+        mu: 1.3,
+        b: 30.0,
+    }];
+    let mut rng = ChaCha8Rng::seed_from_u64(3);
+    let y = synthesize(&x, &truth, 0.1, &mut rng);
+    let prior = Prior {
+        a_rate: 1.0,
+        mu_lo: 0.0,
+        mu_hi: 3.0,
+        b_shape: 2.0,
+        b_rate: 2.0 / 30.0,
+    };
+
+    let cfg = Config {
+        n_replica: 24,
+        beta_min: 1e-1,
+        beta_max: 3e2,
+        burn_in: 2_000,
+        n_sample: 8_000,
+        adapt_interval: 100,
+        target_acc: 0.4,
+        recompute_interval: 1_000,
+        thin: 10,
+        seed: 11,
+        ladder_interval: 100,
+    };
+    let res = run(&x, &y, 1, &prior, &cfg);
+    let lz = log_z(&res.betas, &res.energies);
+
+    // 格子点 l と，l と l+1 の幾何平均（格子点の間）で比較
+    let idx = [6, 12, 18, 22];
+    let betas: Vec<f64> = idx
+        .iter()
+        .flat_map(|&l| [res.betas[l], (res.betas[l] * res.betas[l + 1]).sqrt()])
+        .collect();
+    let lz_mc: Vec<f64> = betas
+        .iter()
+        .map(|&b| log_z_at(&res.betas, &res.energies, &lz, b))
+        .collect();
+    let f_mc = free_energy(&betas, &lz_mc, n);
+    let f_q = free_energy(&betas, &log_z_quadrature(&x, &y, &prior, &betas), n);
+
+    for ((&b, &fm), &fq) in betas.iter().zip(&f_mc).zip(&f_q) {
+        let diff = (fm - fq).abs();
+        println!("beta = {b:8.3}: MC {fm:9.3}  quad {fq:9.3}  |diff| {diff:.3}");
+        assert!(diff < 0.3, "free energy mismatch at beta = {b}");
     }
 }

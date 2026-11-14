@@ -1,7 +1,8 @@
 //! ベイズ的スペクトル分解 + 交換モンテカルロ法（Nagata, Sugita & Okada 2012 の枠組み）
 //! 雑音精度を逆温度とみなして F(K, β) を同時に求める（Tokuda, Nagata & Okada 2017 の考え方）
 //!
-//! 使い方: cargo run --release -- [K_max] [n_sample] [seed]
+//! 使い方: cargo run --release -- [K_max] [n_sample] [seed] [data_seed]
+//! seed は交換モンテカルロの乱数，data_seed は人工データの雑音の乱数に使う．
 //! スレッド数は環境変数 RAYON_NUM_THREADS で指定（未指定なら論理コア数）．
 
 use remc_spectral::{model, remc};
@@ -18,6 +19,10 @@ fn main() -> std::io::Result<()> {
     let k_max: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(5);
     let n_sample: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(20_000);
     let seed: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(42);
+    let data_seed: u64 = args
+        .get(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_120_401);
 
     // ---- 人工データ: 3 本の重なったピーク，雑音 σ = 0.1（真の β = 100） ----
     let n = 301;
@@ -40,7 +45,7 @@ fn main() -> std::io::Result<()> {
         },
     ];
     let sigma = 0.1;
-    let mut data_rng = ChaCha8Rng::seed_from_u64(20120401);
+    let mut data_rng = ChaCha8Rng::seed_from_u64(data_seed);
     let y = model::synthesize(&x, &truth, sigma, &mut data_rng);
     {
         let mut w = BufWriter::new(File::create("data.csv")?);
@@ -70,6 +75,7 @@ fn main() -> std::io::Result<()> {
         recompute_interval: 1000,
         thin: 10,
         seed,
+        ladder_interval: 250,
     };
 
     println!(
@@ -81,7 +87,7 @@ fn main() -> std::io::Result<()> {
         cfg.n_sample
     );
     println!(
-        "true sigma = {sigma}  (true beta = {:.1})\n",
+        "true sigma = {sigma}  (true beta = {:.1}), seed = {seed}, data_seed = {data_seed}\n",
         1.0 / (sigma * sigma)
     );
 
@@ -97,18 +103,22 @@ fn main() -> std::io::Result<()> {
         let lz = remc::log_z(&res.betas, &res.energies);
         let f = remc::free_energy(&res.betas, &lz, n);
 
-        // β について最小化（= 雑音分散の経験ベイズ推定）
-        let (l_hat, &f_min) = f
+        // β について最小化（= 雑音分散の経験ベイズ推定）．格子点の間は再重み付けで補間する．
+        // 事後平均の表示には，F が最小の格子点 l̂ のスロットのサンプルを使う．
+        let (l_hat, _) = f
             .iter()
             .enumerate()
             .min_by(|a, b| a.1.total_cmp(b.1))
             .unwrap();
-        let beta_hat = res.betas[l_hat];
-        let min_ex = res.exchange_rate.iter().cloned().fold(1.0, f64::min);
+        let (beta_hat, f_min) = remc::minimize_free_energy(&res.betas, &res.energies, &lz, n);
+        let (min_ex, max_ex) = res
+            .exchange_rate
+            .iter()
+            .fold((1.0f64, 0.0f64), |(lo, hi), &r| (lo.min(r), hi.max(r)));
 
         println!(
             "K={k}: F_min = {f_min:9.3} at beta = {beta_hat:8.2} (sigma_hat = {:.4}), \
-             min exchange rate = {min_ex:.3}, {:.1} s",
+             exchange rate = [{min_ex:.3}, {max_ex:.3}], {:.1} s",
             1.0 / beta_hat.sqrt(),
             t0.elapsed().as_secs_f64()
         );
@@ -148,7 +158,10 @@ fn main() -> std::io::Result<()> {
     let (k_hat, _, beta_hat) = best.unwrap();
     let (res, l_hat, _) = &results[k_hat - 1];
     println!("\nargmin K = {k_hat}, beta_hat = {beta_hat:.2}");
-    println!("posterior mean ± sd at beta_hat (peaks sorted by mu):");
+    println!(
+        "posterior mean ± sd at grid beta = {:.2} nearest to the F minimum (peaks sorted by mu):",
+        res.betas[*l_hat]
+    );
     let s = &res.samples[*l_hat];
     for k in 0..k_hat {
         let stat = |g: fn(&Peak) -> f64| {
@@ -163,7 +176,7 @@ fn main() -> std::io::Result<()> {
         println!("  peak {k}: a = {a:.3}±{sa:.3}, mu = {mu:.3}±{smu:.3}, b = {b:.1}±{sb:.1}");
     }
     println!(
-        "acceptance (a, mu, b) at beta_hat: {:.2?}",
+        "acceptance (a, mu, b) at that grid beta: {:.2?}",
         res.acceptance[*l_hat]
     );
     println!("\nwrote free_energy.csv");
