@@ -252,12 +252,12 @@ pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcR
         // ---- 逐次部分: レプリカ交換 ----
         exchange(&mut slots, t % 2, &mut ex_rng, &mut ex_acc, &mut ex_tried);
 
-        if (t + 1) % cfg.recompute_interval == 0 {
+        if (t + 1).is_multiple_of(cfg.recompute_interval) {
             slots.par_iter_mut().for_each(|s| s.chain.recompute(x, y));
         }
 
         if t < cfg.burn_in {
-            if (t + 1) % cfg.adapt_interval == 0 {
+            if (t + 1).is_multiple_of(cfg.adapt_interval) {
                 slots.iter_mut().for_each(|s| s.adapt(cfg.target_acc));
             }
             if t + 1 == cfg.burn_in {
@@ -273,7 +273,7 @@ pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcR
             let ts = t - cfg.burn_in;
             for (l, s) in slots.iter().enumerate() {
                 energies[l].push(s.chain.energy());
-                if ts % cfg.thin == 0 {
+                if ts.is_multiple_of(cfg.thin) {
                     // ラベルスイッチングに対処するため μ の昇順に並べてから保存
                     let mut p = s.chain.peaks.clone();
                     p.sort_by(|u, v| u.mu.total_cmp(&v.mu));

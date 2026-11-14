@@ -34,7 +34,11 @@
 │   └── main.rs       デモ用バイナリ（K = 1..K_max の実行とモデル選択）
 ├── tests/
 │   └── free_energy.rs  結合テスト: K = 1 の自由エネルギーを格子数値積分と比較
-└── .github/workflows/ci.yml  fmt / clippy / doc / test（Linux・macOS）
+├── .github/workflows/ci.yml  fmt / clippy / doc / test（Linux・macOS）
+├── CLAUDE.md          Claude Code 向けのプロジェクト説明と不変条件
+└── .claude/
+    ├── settings.json    権限設定と，.rs 編集後に rustfmt を走らせるフック
+    └── skills/check/    /check: CI と同じ検査を一括実行
 ```
 
 ## 開発
