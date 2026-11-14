@@ -1,0 +1,48 @@
+# remc-spectral
+
+ベイズ的スペクトル分解（ガウス型ピークの和）を交換モンテカルロ法で行い，
+ピーク数 K と雑音精度 β についてのベイズ自由エネルギー F(K, β) を計算する実装．
+
+## 背景
+
+観測モデル y_i = Σ_k a_k exp(-b_k (x_i - μ_k)² / 2) + ε_i，ε_i ~ N(0, 1/β) に対し，
+逆温度を雑音精度 β とみなして交換モンテカルロを回すと，1 回の実行で
+
+    F(K, β) = (n/2) log(2π/β) - log Z(β),   Z(β) = ∫ exp(-β nE_n(w)) φ(w) dw
+
+が逆温度列上で得られる．log Z は隣接温度の比の積で推定する（Z(0) = 1）．
+
+- K. Nagata, S. Sugita, M. Okada, Neural Networks 28, 82–89 (2012).
+- S. Tokuda, K. Nagata, M. Okada, J. Phys. Soc. Jpn. 86, 024001 (2017).
+
+## 使い方
+
+    cargo run --release -- [K_max=5] [n_sample=20000] [seed=42]
+    RAYON_NUM_THREADS=8 cargo run --release      # スレッド数の指定
+
+出力: `data.csv`（人工データ），`free_energy.csv`（K, β, F, ⟨nE⟩, 交換率）
+
+## 構成
+
+```
+.
+├── Cargo.toml
+├── src/
+│   ├── lib.rs        ライブラリクレートのルート
+│   ├── model.rs      ピーク関数，事前分布，人工データ生成
+│   ├── remc.rs       交換モンテカルロ本体（差分残差更新，偶奇交換，自由エネルギー推定）＋単体テスト
+│   └── main.rs       デモ用バイナリ（K = 1..K_max の実行とモデル選択）
+├── tests/
+│   └── free_energy.rs  結合テスト: K = 1 の自由エネルギーを格子数値積分と比較
+└── .github/workflows/ci.yml  fmt / clippy / doc / test（Linux・macOS）
+```
+
+## 開発
+
+    cargo test                                   # 単体テスト＋結合テスト
+    cargo fmt --all -- --check
+    cargo clippy --all-targets -- -D warnings
+    cargo doc --no-deps --open                   # API ドキュメント
+
+単体テストでは，差分更新した SSE が再計算値と一致すること，
+スレッド数を変えても結果がビット単位で一致することを確認している．
