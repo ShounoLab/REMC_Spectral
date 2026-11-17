@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.87"  # u64::is_multiple_of
 description = "Bayesian spectral deconvolution with the exchange (replica-exchange) Monte Carlo method"
 readme = "README.md"
+license = "MIT"
 
 [dependencies]
 rand = "0.8"
