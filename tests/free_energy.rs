@@ -6,7 +6,7 @@
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use remc_spectral::model::{synthesize, Peak, Prior};
+use remc_spectral::model::{synthesize, Gauss, Prior};
 use remc_spectral::remc::{free_energy, log_z, log_z_at, run, Config};
 
 fn log_add(a: f64, b: f64) -> f64 {
@@ -65,7 +65,7 @@ fn log_z_quadrature(x: &[f64], y: &[f64], prior: &Prior, betas: &[f64]) -> Vec<f
 fn k1_free_energy_matches_quadrature() {
     let n = 151;
     let x: Vec<f64> = (0..n).map(|i| 3.0 * i as f64 / (n - 1) as f64).collect();
-    let truth = [Peak {
+    let truth = [Gauss {
         a: 1.0,
         mu: 1.3,
         b: 30.0,
@@ -93,7 +93,7 @@ fn k1_free_energy_matches_quadrature() {
         seed: 11,
         ladder_interval: 0,
     };
-    let res = run(&x, &y, 1, &prior, &cfg);
+    let res = run::<Gauss>(&x, &y, 1, &prior, &cfg);
     let f_mc = free_energy(&res.betas, &log_z(&res.betas, &res.energies), n);
 
     // 中間〜低温側のいくつかの β で比較
@@ -118,7 +118,7 @@ fn k1_free_energy_matches_quadrature() {
 fn k1_free_energy_matches_quadrature_with_adapted_ladder() {
     let n = 151;
     let x: Vec<f64> = (0..n).map(|i| 3.0 * i as f64 / (n - 1) as f64).collect();
-    let truth = [Peak {
+    let truth = [Gauss {
         a: 1.0,
         mu: 1.3,
         b: 30.0,
@@ -146,7 +146,7 @@ fn k1_free_energy_matches_quadrature_with_adapted_ladder() {
         seed: 11,
         ladder_interval: 100,
     };
-    let res = run(&x, &y, 1, &prior, &cfg);
+    let res = run::<Gauss>(&x, &y, 1, &prior, &cfg);
     let lz = log_z(&res.betas, &res.energies);
 
     // 格子点 l と，l と l+1 の幾何平均（格子点の間）で比較

@@ -10,16 +10,18 @@
 //!     独立に引き直す（自己相関がなくなり，log Z の最初の比が安定する）．
 //!   - 乱数はスロットごとに ChaCha のストリームを割り当てるので，
 //!     スレッド数やスケジューリングに依存せず結果がビット単位で再現する．
+//!   - ピークの形は [`PeakShape`] の型引数 `S` で与える（`run::<Gauss>(…)`）．
+//!     形ごとに専用のコードが生成されるので，最内ループの評価もインライン展開される．
 
-use crate::model::{Peak, Prior, PARAMS};
+use crate::model::PeakShape;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::StandardNormal;
 use rayon::prelude::*;
 
 /// 温度間を移動する状態
-pub struct Chain {
-    pub peaks: Vec<Peak>,
+pub struct Chain<S> {
+    pub peaks: Vec<S>,
     /// 各ピークの寄与 g_k(x_i)．K×N を行優先で格納（ピーク k の行が連続）．
     contrib: Vec<f64>,
     /// 残差 r_i = y_i - Σ_k g_k(x_i)
@@ -28,8 +30,8 @@ pub struct Chain {
     sse: f64,
 }
 
-impl Chain {
-    fn new(peaks: Vec<Peak>, x: &[f64], y: &[f64]) -> Self {
+impl<S: PeakShape> Chain<S> {
+    fn new(peaks: Vec<S>, x: &[f64], y: &[f64]) -> Self {
         let n = x.len();
         let mut c = Chain {
             contrib: vec![0.0; peaks.len() * n],
@@ -63,33 +65,35 @@ impl Chain {
 }
 
 /// 温度スロット（動かないもの一式）
-pub struct Slot {
+pub struct Slot<S> {
     pub beta: f64,
-    pub chain: Chain,
+    pub chain: Chain<S>,
     rng: ChaCha8Rng,
-    step: [f64; 3],
-    acc: [u64; 3],
-    tried: [u64; 3],
+    /// パラメータごとの提案のステップ幅・受理数・試行数（長さ N_PARAMS）
+    step: Vec<f64>,
+    acc: Vec<u64>,
+    tried: Vec<u64>,
     /// 提案ピークの寄与を書き込む作業領域（更新ごとのメモリ確保を避ける）
     scratch: Vec<f64>,
 }
 
-impl Slot {
-    fn new(beta: f64, chain: Chain, rng: ChaCha8Rng, step: [f64; 3]) -> Self {
+impl<S: PeakShape> Slot<S> {
+    fn new(beta: f64, chain: Chain<S>, rng: ChaCha8Rng, step: Vec<f64>) -> Self {
+        assert_eq!(step.len(), S::N_PARAMS);
         let n = chain.resid.len();
         Slot {
             beta,
             chain,
             rng,
             step,
-            acc: [0; 3],
-            tried: [0; 3],
+            acc: vec![0; S::N_PARAMS],
+            tried: vec![0; S::N_PARAMS],
             scratch: vec![0.0; n],
         }
     }
 
     /// 1 スイープ．β = 0 なら事前分布から独立に引き直し，それ以外は単一成分 Metropolis 更新．
-    fn sweep(&mut self, x: &[f64], prior: &Prior) {
+    fn sweep(&mut self, x: &[f64], prior: &S::Prior) {
         if self.beta == 0.0 {
             self.redraw_from_prior(x, prior);
         } else {
@@ -103,9 +107,9 @@ impl Slot {
     /// Metropolis のランダムウォークより自己相関がずっと短く，log Z の最初の比
     /// log ⟨exp(-β_1 nE_n)⟩_φ の推定が安定する．毎スイープ新しい配置が交換で上の温度へ運ばれる．
     /// 乱数はこのスロットのストリームだけを使う．
-    fn redraw_from_prior(&mut self, x: &[f64], prior: &Prior) {
+    fn redraw_from_prior(&mut self, x: &[f64], prior: &S::Prior) {
         for k in 0..self.chain.peaks.len() {
-            let cand = prior.sample_peak(&mut self.rng);
+            let cand = S::sample_prior(prior, &mut self.rng);
             let sse_new = self.eval_replacement(k, cand, x);
             self.commit(k, cand, sse_new);
         }
@@ -113,7 +117,7 @@ impl Slot {
 
     /// ピーク k を `cand` に差し替えたときの SSE を O(N) で計算し，`cand` の寄与を `scratch` に書く．
     ///   r_i' = r_i + g_k^old(x_i) - g_k^new(x_i)
-    fn eval_replacement(&mut self, k: usize, cand: Peak, x: &[f64]) -> f64 {
+    fn eval_replacement(&mut self, k: usize, cand: S, x: &[f64]) -> f64 {
         let n = x.len();
         let g_old = &self.chain.contrib[k * n..(k + 1) * n];
         let mut sse_new = 0.0;
@@ -133,7 +137,7 @@ impl Slot {
     }
 
     /// [`Slot::eval_replacement`] で評価した差し替えを確定し，残差・寄与・SSE を更新する．
-    fn commit(&mut self, k: usize, cand: Peak, sse_new: f64) {
+    fn commit(&mut self, k: usize, cand: S, sse_new: f64) {
         let n = self.scratch.len();
         // 同じ構造体の異なるフィールドへの可変借用は同時に取れる
         // （resid と contrib は disjoint なので borrow checker が許す）．
@@ -147,23 +151,22 @@ impl Slot {
     }
 
     /// 全パラメータを 1 回ずつ単一成分 Metropolis 更新する
-    fn metropolis_sweep(&mut self, x: &[f64], prior: &Prior) {
+    fn metropolis_sweep(&mut self, x: &[f64], prior: &S::Prior) {
         for k in 0..self.chain.peaks.len() {
-            for &p in &PARAMS {
-                let j = p as usize;
+            for j in 0..S::N_PARAMS {
                 self.tried[j] += 1;
 
-                let old = self.chain.peaks[k].get(p);
+                let old = self.chain.peaks[k].get(j);
                 let z: f64 = self.rng.sample(StandardNormal);
                 let new = old + self.step[j] * z;
 
-                let d_prior = prior.log_density(p, new) - prior.log_density(p, old);
+                let d_prior = S::log_prior(prior, j, new) - S::log_prior(prior, j, old);
                 if d_prior == f64::NEG_INFINITY {
                     continue; // 台の外（a ≤ 0 など）は即棄却
                 }
 
                 let mut cand = self.chain.peaks[k];
-                cand.set(p, new);
+                cand.set(j, new);
 
                 // 差分更新: ピーク k の寄与だけを差し替えた SSE を O(N) で計算
                 let sse_new = self.eval_replacement(k, cand, x);
@@ -180,21 +183,26 @@ impl Slot {
 
     /// burn-in 中だけステップ幅を受理率に合わせて調整する（本サンプリング中は固定）
     fn adapt(&mut self, target: f64) {
-        for j in 0..3 {
-            if self.tried[j] == 0 {
+        let it = self.step.iter_mut().zip(&mut self.acc).zip(&mut self.tried);
+        for ((step, acc), tried) in it {
+            if *tried == 0 {
                 continue;
             }
-            let rate = self.acc[j] as f64 / self.tried[j] as f64;
-            self.step[j] *= if rate > target { 1.2 } else { 1.0 / 1.2 };
-            self.step[j] = self.step[j].clamp(1e-8, 1e4);
-            self.acc[j] = 0;
-            self.tried[j] = 0;
+            let rate = *acc as f64 / *tried as f64;
+            *step *= if rate > target { 1.2 } else { 1.0 / 1.2 };
+            *step = step.clamp(1e-8, 1e4);
+            *acc = 0;
+            *tried = 0;
         }
     }
 
-    pub fn acceptance(&self) -> [f64; 3] {
-        // std::array::from_fn（Rust 1.63+）: 添字から固定長配列を直接作る
-        std::array::from_fn(|j| self.acc[j] as f64 / self.tried[j].max(1) as f64)
+    /// パラメータごとの受理率（長さ N_PARAMS）
+    pub fn acceptance(&self) -> Vec<f64> {
+        self.acc
+            .iter()
+            .zip(&self.tried)
+            .map(|(&a, &t)| a as f64 / t.max(1) as f64)
+            .collect()
     }
 }
 
@@ -218,15 +226,16 @@ pub struct Config {
 /// [`adapt_ladder`] の利得 κ．交換率の偏差 0.1 につき間隔を約 10 % 伸縮させる．
 const LADDER_GAIN: f64 = 1.0;
 
-pub struct RemcResult {
+pub struct RemcResult<S> {
     pub betas: Vec<f64>,
     /// `energies[l][t]`: スロット l の t 番目のサンプルの nE_n(w)
     pub energies: Vec<Vec<f64>>,
     /// `samples[l][t]`: 間引いたピーク列（μ の昇順に並べ替え済み）
-    pub samples: Vec<Vec<Vec<Peak>>>,
+    pub samples: Vec<Vec<Vec<S>>>,
     /// `exchange_rate[l]`: スロット l と l+1 の間の交換受理率
     pub exchange_rate: Vec<f64>,
-    pub acceptance: Vec<[f64; 3]>,
+    /// `acceptance[l][j]`: スロット l でのパラメータ j の Metropolis 受理率（β = 0 のスロットは 0）
+    pub acceptance: Vec<Vec<f64>>,
 }
 
 /// 逆温度列: β_0 = 0（事前分布），β_1..β_{L-1} は β_min から β_max まで等比
@@ -271,8 +280,8 @@ pub fn adapt_ladder(betas: &[f64], rates: &[f64], gain: f64) -> Vec<f64> {
 
 /// 隣接ペアの交換．parity で偶数ペア (0,1),(2,3),… と奇数ペア (1,2),(3,4),… を交互に試す
 /// （deterministic even-odd 方式）．
-fn exchange(
-    slots: &mut [Slot],
+fn exchange<S: PeakShape>(
+    slots: &mut [Slot<S>],
     parity: usize,
     rng: &mut ChaCha8Rng,
     acc: &mut [u64],
@@ -294,20 +303,29 @@ fn exchange(
     }
 }
 
-/// K 本のピークをもつモデルで交換モンテカルロを実行する
-pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcResult {
+/// 形 `S` のピークを K 本もつモデルで交換モンテカルロを実行する．
+///
+/// 形は型引数で指定する（例: `run::<Gauss>(&x, &y, 3, &prior, &cfg)`）．
+/// 事前分布の型 `S::Prior` からは形が一意に決まらないので，型引数は省略できない．
+pub fn run<S: PeakShape>(
+    x: &[f64],
+    y: &[f64],
+    k: usize,
+    prior: &S::Prior,
+    cfg: &Config,
+) -> RemcResult<S> {
     let mut betas = ladder(cfg.n_replica, cfg.beta_min, cfg.beta_max);
     let l_max = betas.len();
 
     // スロット l には (seed, stream = K * 2^20 + l) の独立ストリームを割り当てる
-    let mut slots: Vec<Slot> = betas
+    let mut slots: Vec<Slot<S>> = betas
         .iter()
         .enumerate()
         .map(|(l, &beta)| {
             let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
             rng.set_stream(((k as u64) << 20) + l as u64);
-            let peaks: Vec<Peak> = (0..k).map(|_| prior.sample_peak(&mut rng)).collect();
-            Slot::new(beta, Chain::new(peaks, x, y), rng, prior.initial_steps())
+            let peaks: Vec<S> = (0..k).map(|_| S::sample_prior(prior, &mut rng)).collect();
+            Slot::new(beta, Chain::new(peaks, x, y), rng, S::initial_steps(prior))
         })
         .collect();
 
@@ -356,8 +374,8 @@ pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcR
                 ex_acc.iter_mut().for_each(|v| *v = 0);
                 ex_tried.iter_mut().for_each(|v| *v = 0);
                 slots.iter_mut().for_each(|s| {
-                    s.acc = [0; 3];
-                    s.tried = [0; 3];
+                    s.acc.fill(0);
+                    s.tried.fill(0);
                 });
             }
         } else {
@@ -365,9 +383,9 @@ pub fn run(x: &[f64], y: &[f64], k: usize, prior: &Prior, cfg: &Config) -> RemcR
             for (l, s) in slots.iter().enumerate() {
                 energies[l].push(s.chain.energy());
                 if ts.is_multiple_of(cfg.thin) {
-                    // ラベルスイッチングに対処するため μ の昇順に並べてから保存
+                    // ラベルスイッチングに対処するためピーク位置の昇順に並べてから保存
                     let mut p = s.chain.peaks.clone();
-                    p.sort_by(|u, v| u.mu.total_cmp(&v.mu));
+                    p.sort_by(|u, v| u.center().total_cmp(&v.center()));
                     samples[l].push(p);
                 }
             }
@@ -478,17 +496,17 @@ pub fn free_energy(betas: &[f64], lz: &[f64], n: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::synthesize;
+    use crate::model::{synthesize, Gauss, Prior};
 
     fn toy_data() -> (Vec<f64>, Vec<f64>, Prior) {
         let x: Vec<f64> = (0..101).map(|i| i as f64 * 0.03).collect();
         let truth = [
-            Peak {
+            Gauss {
                 a: 1.0,
                 mu: 1.2,
                 b: 40.0,
             },
-            Peak {
+            Gauss {
                 a: 0.7,
                 mu: 2.0,
                 b: 30.0,
@@ -542,7 +560,7 @@ mod tests {
     #[test]
     fn log_z_at_agrees_with_ladder_at_grid_points() {
         let (x, y, prior) = toy_data();
-        let res = run(&x, &y, 2, &prior, &small_config());
+        let res = run::<Gauss>(&x, &y, 2, &prior, &small_config());
         let lz = log_z(&res.betas, &res.energies);
         for (&b, &z) in res.betas.iter().zip(&lz) {
             assert!(
@@ -584,8 +602,15 @@ mod tests {
     fn incremental_update_matches_recompute() {
         let (x, y, prior) = toy_data();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let peaks = (0..3).map(|_| prior.sample_peak(&mut rng)).collect();
-        let mut slot = Slot::new(50.0, Chain::new(peaks, &x, &y), rng, prior.initial_steps());
+        let peaks = (0..3)
+            .map(|_| Gauss::sample_prior(&prior, &mut rng))
+            .collect();
+        let mut slot = Slot::new(
+            50.0,
+            Chain::new(peaks, &x, &y),
+            rng,
+            Gauss::initial_steps(&prior),
+        );
         for _ in 0..500 {
             slot.sweep(&x, &prior);
         }
@@ -601,8 +626,15 @@ mod tests {
     fn beta_zero_slot_draws_independently_from_prior() {
         let (x, y, prior) = toy_data();
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        let peaks = (0..2).map(|_| prior.sample_peak(&mut rng)).collect();
-        let mut slot = Slot::new(0.0, Chain::new(peaks, &x, &y), rng, prior.initial_steps());
+        let peaks = (0..2)
+            .map(|_| Gauss::sample_prior(&prior, &mut rng))
+            .collect();
+        let mut slot = Slot::new(
+            0.0,
+            Chain::new(peaks, &x, &y),
+            rng,
+            Gauss::initial_steps(&prior),
+        );
 
         let n_sweep = 20_000;
         let mut energies = Vec::with_capacity(n_sweep);
@@ -652,7 +684,7 @@ mod tests {
                     .num_threads(threads)
                     .build()
                     .unwrap()
-                    .install(|| run(&x, &y, 2, &prior, &cfg))
+                    .install(|| run::<Gauss>(&x, &y, 2, &prior, &cfg))
             };
             let r1 = run_with(1);
             let r2 = run_with(3);

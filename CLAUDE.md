@@ -18,7 +18,9 @@
 
 ## 構成
 
-- `src/model.rs`: `Peak`，`Prior`（Exp × Uniform × Gamma），人工データ生成
+- `src/model.rs`: ピークの形のトレイト `PeakShape`，ガウス型 `Gauss`，`Prior`（Exp × Uniform × Gamma），人工データ生成．
+  `Chain`/`Slot`/`run` は `S: PeakShape` でジェネリック（`run::<Gauss>(…)`）．形を足すときは `PeakShape` を実装し，
+  `model::tests::check_shape_contract` を通す
 - `src/remc.rs`: 交換モンテカルロ本体と自由エネルギー推定，単体テスト
 - `src/main.rs`: デモ用バイナリ（ライブラリを `remc_spectral::` 経由で使う）
 - `tests/free_energy.rs`: K = 1 の F(β) を格子数値積分と比較する結合テスト

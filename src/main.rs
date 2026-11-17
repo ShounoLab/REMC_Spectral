@@ -8,7 +8,7 @@
 
 use remc_spectral::{model, remc};
 
-use model::{Peak, Prior};
+use model::{Gauss, PeakShape, Prior};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::fs::File;
@@ -30,17 +30,17 @@ fn main() -> std::io::Result<()> {
     // ---- 人工データ: 3 本の重なったピーク，雑音 σ = 0.1（真の β = 100） ----
     let x: Vec<f64> = (0..n).map(|i| 3.0 * i as f64 / (n - 1) as f64).collect();
     let truth = [
-        Peak {
+        Gauss {
             a: 1.0,
             mu: 1.0,
             b: 1.0 / 0.15f64.powi(2),
         },
-        Peak {
+        Gauss {
             a: 0.8,
             mu: 1.4,
             b: 1.0 / 0.15f64.powi(2),
         },
-        Peak {
+        Gauss {
             a: 1.2,
             mu: 2.2,
             b: 1.0 / 0.20f64.powi(2),
@@ -101,7 +101,7 @@ fn main() -> std::io::Result<()> {
 
     for k in 1..=k_max {
         let t0 = Instant::now();
-        let res = remc::run(&x, &y, k, &prior, &cfg);
+        let res = remc::run::<Gauss>(&x, &y, k, &prior, &cfg);
         let lz = remc::log_z(&res.betas, &res.energies);
         let f = remc::free_energy(&res.betas, &lz, n);
 
@@ -161,24 +161,27 @@ fn main() -> std::io::Result<()> {
     let (res, l_hat, _) = &results[k_hat - 1];
     println!("\nargmin K = {k_hat}, beta_hat = {beta_hat:.2}");
     println!(
-        "posterior mean ± sd at grid beta = {:.2} nearest to the F minimum (peaks sorted by mu):",
+        "posterior mean ± sd at grid beta = {:.2} nearest to the F minimum (peaks sorted by center):",
         res.betas[*l_hat]
     );
     let s = &res.samples[*l_hat];
     for k in 0..k_hat {
-        let stat = |g: fn(&Peak) -> f64| {
-            let v: Vec<f64> = s.iter().map(|p| g(&p[k])).collect();
-            let m = v.iter().sum::<f64>() / v.len() as f64;
-            let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt();
-            (m, sd)
-        };
-        let (a, sa) = stat(|p| p.a);
-        let (mu, smu) = stat(|p| p.mu);
-        let (b, sb) = stat(|p| p.b);
-        println!("  peak {k}: a = {a:.3}±{sa:.3}, mu = {mu:.3}±{smu:.3}, b = {b:.1}±{sb:.1}");
+        // パラメータ j の事後平均と標準偏差
+        let stats: Vec<String> = Gauss::PARAM_NAMES
+            .iter()
+            .enumerate()
+            .map(|(j, name)| {
+                let v: Vec<f64> = s.iter().map(|p| p[k].get(j)).collect();
+                let m = v.iter().sum::<f64>() / v.len() as f64;
+                let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt();
+                format!("{name} = {m:.3}±{sd:.3}")
+            })
+            .collect();
+        println!("  peak {k}: {}", stats.join(", "));
     }
     println!(
-        "acceptance (a, mu, b) at that grid beta: {:.2?}",
+        "acceptance ({}) at that grid beta: {:.2?}",
+        Gauss::PARAM_NAMES.join(", "),
         res.acceptance[*l_hat]
     );
     println!("\nwrote free_energy.csv");
