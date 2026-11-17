@@ -17,8 +17,9 @@
 
 ## 使い方
 
-    cargo run --release -- [K_max=5] [n_sample=20000] [seed=42] [data_seed=20120401]
+    cargo run --release -- [K_max=5] [n_sample=20000] [seed=42] [data_seed=20120401] [n=301] [n_replica=40]
     # seed: 交換モンテカルロの乱数，data_seed: 人工データの雑音の乱数
+    # n: データ点数（[0, 3] を等間隔），n_replica: レプリカ数
     RAYON_NUM_THREADS=8 cargo run --release      # スレッド数の指定
 
 出力: `data.csv`（人工データ），`free_energy.csv`（K, β, F, ⟨nE⟩, 交換率）

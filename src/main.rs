@@ -1,8 +1,9 @@
 //! ベイズ的スペクトル分解 + 交換モンテカルロ法（Nagata, Sugita & Okada 2012 の枠組み）
 //! 雑音精度を逆温度とみなして F(K, β) を同時に求める（Tokuda, Nagata & Okada 2017 の考え方）
 //!
-//! 使い方: cargo run --release -- [K_max] [n_sample] [seed] [data_seed]
+//! 使い方: cargo run --release -- [K_max] [n_sample] [seed] [data_seed] [n] [n_replica]
 //! seed は交換モンテカルロの乱数，data_seed は人工データの雑音の乱数に使う．
+//! n はデータ点数（観測範囲 [0, 3] を等間隔に取る），n_replica はレプリカ数．
 //! スレッド数は環境変数 RAYON_NUM_THREADS で指定（未指定なら論理コア数）．
 
 use remc_spectral::{model, remc};
@@ -23,9 +24,10 @@ fn main() -> std::io::Result<()> {
         .get(4)
         .and_then(|s| s.parse().ok())
         .unwrap_or(20_120_401);
+    let n: usize = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(301);
+    let n_replica: usize = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(40);
 
     // ---- 人工データ: 3 本の重なったピーク，雑音 σ = 0.1（真の β = 100） ----
-    let n = 301;
     let x: Vec<f64> = (0..n).map(|i| 3.0 * i as f64 / (n - 1) as f64).collect();
     let truth = [
         Peak {
@@ -65,7 +67,7 @@ fn main() -> std::io::Result<()> {
     };
 
     let cfg = remc::Config {
-        n_replica: 40,
+        n_replica,
         beta_min: 1e-2,
         beta_max: 1e3,
         burn_in: n_sample / 2,

@@ -12,7 +12,7 @@
 - テスト: `cargo test`（`[profile.test]` で最適化済み．結合テストを含め数秒）
 - 整形・静的検査: `cargo fmt --all` / `cargo clippy --all-targets -- -D warnings`
 - ドキュメント: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
-- デモ実行: `cargo run --release -- [K_max] [n_sample] [seed] [data_seed]`（スレッド数は `RAYON_NUM_THREADS`）
+- デモ実行: `cargo run --release -- [K_max] [n_sample] [seed] [data_seed] [n] [n_replica]`（スレッド数は `RAYON_NUM_THREADS`）
 
 変更を終えたら fmt・clippy・test がすべて通ることを確認する（CI と同じ条件）．
 
