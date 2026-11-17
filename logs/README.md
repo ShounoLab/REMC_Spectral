@@ -13,3 +13,5 @@ CSV（`data.csv`，`free_energy.csv`）は `.gitignore` で除外されている
 | 2026-11-14 | [mc-seed-scan](2026-11-14_mc-seed-scan/README.md) | MCMC の seed だけを変えても F の揺らぎは約 0.05．K=4 が最小なのは系統的 |
 | 2026-11-15 | [data-seed-scan](2026-11-15_data-seed-scan/README.md) | データを変えると 9 組中 6 組で K=3．K=5 の交換率が 0.10 まで低下 |
 | 2026-11-15 | [ladder-adapt](2026-11-15_ladder-adapt/README.md) | 逆温度列の適応と β̂ の補間を入れて再実行．β̂ が 95〜106 の連続値に |
+| 2026-11-16 | [n-scan](2026-11-16_n-scan/README.md) | n = 101〜10001．F(4)−F(3) は log n に傾き 0.22 で増加（正則なら 1.5）．n ≥ 1001 でほぼ K = 3 |
+| 2026-11-17 | [mixing-diag](2026-11-17_mixing-diag/README.md) | エネルギーの τ_int は β ≤ 400 で 3〜9 スイープ．K = 5 は β ≳ 450 で数百〜1400（F(β̂) には影響しない） |

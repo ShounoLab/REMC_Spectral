@@ -1,0 +1,15 @@
+[package]
+name = "mixdiag"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+remc-spectral = { path = "/Users/shouno/tmp/REMC_Spectral" }
+rand = "0.8"
+rand_chacha = "0.3"
+
+[profile.release]
+opt-level = 3
+
+# リポジトリ内に置いても親クレートのワークスペースに入らないようにする
+[workspace]
