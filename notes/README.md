@@ -11,3 +11,4 @@
 |---|---|
 | [2026-11-15_model-selection.md](2026-11-15_model-selection.md) | K = 3 と 4 が区別しにくい問題，交換率と β̂ の改善 |
 | [2026-11-17_sampler.md](2026-11-17_sampler.md) | サンプラーの改善（β_0 = 0 のスロットを事前分布から直接サンプリング） |
+| [2026-11-17_peak-shapes.md](2026-11-17_peak-shapes.md) | ピーク形状の拡張（Lorentz，疑似 Voigt，Voigt） |
