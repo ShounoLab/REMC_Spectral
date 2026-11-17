@@ -32,6 +32,8 @@
 - 逆温度列は β_0 = 0 を必ず含む．自由エネルギーは Z(0) = ∫φ = 1 を基準にするので，
   事前分布は正規化された proper な分布であること（対数密度の定数項は省略してよい）．
 - `F(β) = (n/2) log(2π/β) - log Z(β)`．log Z は隣接温度比の積で，必ず log-sum-exp で計算する．
+- β_0 = 0 のスロットは Metropolis ではなく，毎スイープ事前分布から独立に引き直す（`Slot::redraw_from_prior`）．
+  乱数はそのスロットのストリームから取る．
 - 交換の受理確率は `exp((β_{l+1} - β_l)(E_{l+1} - E_l))`．偶数ペアと奇数ペアを交互に試す．
 - 残差 `resid`，寄与 `contrib`，`sse` は差分更新で常に整合させる．`recompute` で定期的に誤差をリセットする．
 - ステップ幅の適応は burn-in 中のみ．本サンプリング中に変えると詳細釣り合いが崩れる．
@@ -40,7 +42,7 @@
 - 乱数はスロットごとの `ChaCha8Rng` ストリームだけを使う．`thread_rng()` や共有 RNG を並列部分に持ち込まない
   （スレッド数に依存せずビット単位で再現することをテストで保証している）．
 
-サンプラーや推定器に手を入れたら，`incremental_update_matches_recompute`，
+サンプラーや推定器に手を入れたら，`incremental_update_matches_recompute`，`beta_zero_slot_draws_independently_from_prior`，
 `result_is_independent_of_thread_count`，`k1_free_energy_matches_quadrature`，
 `k1_free_energy_matches_quadrature_with_adapted_ladder` が通ることを必ず確認する．
 テストの許容誤差を緩めて通すのは禁止．通らない場合は原因を報告する．

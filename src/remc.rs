@@ -6,6 +6,8 @@
 //!   - Chain の中身は Vec（ヒープへのポインタ＋長さ＋容量）なので，swap は O(1)．
 //!     実質的に「温度ラベルの付け替え」と同じコストで済む．
 //!   - Metropolis 更新はスロットごとに独立なので rayon で並列化．交換は O(L) の逐次処理．
+//!   - β_0 = 0 のスロットの目標は事前分布そのものなので，Metropolis ではなく毎スイープ事前分布から
+//!     独立に引き直す（自己相関がなくなり，log Z の最初の比が安定する）．
 //!   - 乱数はスロットごとに ChaCha のストリームを割り当てるので，
 //!     スレッド数やスケジューリングに依存せず結果がビット単位で再現する．
 
@@ -86,9 +88,66 @@ impl Slot {
         }
     }
 
-    /// 全パラメータを 1 回ずつ単一成分 Metropolis 更新する（1 スイープ）
+    /// 1 スイープ．β = 0 なら事前分布から独立に引き直し，それ以外は単一成分 Metropolis 更新．
     fn sweep(&mut self, x: &[f64], prior: &Prior) {
+        if self.beta == 0.0 {
+            self.redraw_from_prior(x, prior);
+        } else {
+            self.metropolis_sweep(x, prior);
+        }
+    }
+
+    /// β = 0 の目標分布は事前分布 φ そのものなので，全ピークを φ から独立に引き直す．
+    ///
+    /// 目標分布からの独立な引き直しはそれ自体が φ を不変にする遷移核なので，詳細釣り合いは保たれる．
+    /// Metropolis のランダムウォークより自己相関がずっと短く，log Z の最初の比
+    /// log ⟨exp(-β_1 nE_n)⟩_φ の推定が安定する．毎スイープ新しい配置が交換で上の温度へ運ばれる．
+    /// 乱数はこのスロットのストリームだけを使う．
+    fn redraw_from_prior(&mut self, x: &[f64], prior: &Prior) {
+        for k in 0..self.chain.peaks.len() {
+            let cand = prior.sample_peak(&mut self.rng);
+            let sse_new = self.eval_replacement(k, cand, x);
+            self.commit(k, cand, sse_new);
+        }
+    }
+
+    /// ピーク k を `cand` に差し替えたときの SSE を O(N) で計算し，`cand` の寄与を `scratch` に書く．
+    ///   r_i' = r_i + g_k^old(x_i) - g_k^new(x_i)
+    fn eval_replacement(&mut self, k: usize, cand: Peak, x: &[f64]) -> f64 {
         let n = x.len();
+        let g_old = &self.chain.contrib[k * n..(k + 1) * n];
+        let mut sse_new = 0.0;
+        for (((s, &xi), &r), &go) in self
+            .scratch
+            .iter_mut()
+            .zip(x)
+            .zip(&self.chain.resid)
+            .zip(g_old)
+        {
+            let g = cand.eval(xi);
+            *s = g;
+            let rn = r + go - g;
+            sse_new += rn * rn;
+        }
+        sse_new
+    }
+
+    /// [`Slot::eval_replacement`] で評価した差し替えを確定し，残差・寄与・SSE を更新する．
+    fn commit(&mut self, k: usize, cand: Peak, sse_new: f64) {
+        let n = self.scratch.len();
+        // 同じ構造体の異なるフィールドへの可変借用は同時に取れる
+        // （resid と contrib は disjoint なので borrow checker が許す）．
+        let row = &mut self.chain.contrib[k * n..(k + 1) * n];
+        for ((r, g), &gn) in self.chain.resid.iter_mut().zip(row).zip(&self.scratch) {
+            *r += *g - gn;
+            *g = gn;
+        }
+        self.chain.sse = sse_new;
+        self.chain.peaks[k] = cand;
+    }
+
+    /// 全パラメータを 1 回ずつ単一成分 Metropolis 更新する
+    fn metropolis_sweep(&mut self, x: &[f64], prior: &Prior) {
         for k in 0..self.chain.peaks.len() {
             for &p in &PARAMS {
                 let j = p as usize;
@@ -107,34 +166,12 @@ impl Slot {
                 cand.set(p, new);
 
                 // 差分更新: ピーク k の寄与だけを差し替えた SSE を O(N) で計算
-                //   r_i' = r_i + g_k^old(x_i) - g_k^new(x_i)
-                let g_old = &self.chain.contrib[k * n..(k + 1) * n];
-                let mut sse_new = 0.0;
-                for (((s, &xi), &r), &go) in self
-                    .scratch
-                    .iter_mut()
-                    .zip(x)
-                    .zip(&self.chain.resid)
-                    .zip(g_old)
-                {
-                    let g = cand.eval(xi);
-                    *s = g;
-                    let rn = r + go - g;
-                    sse_new += rn * rn;
-                }
+                let sse_new = self.eval_replacement(k, cand, x);
 
                 // 目標分布 ∝ exp(-β nE_n(w)) φ(w)
                 let log_ratio = -0.5 * self.beta * (sse_new - self.chain.sse) + d_prior;
                 if log_ratio >= 0.0 || self.rng.gen::<f64>().ln() < log_ratio {
-                    // 受理．同じ構造体の異なるフィールドへの可変借用は同時に取れる
-                    // （resid と contrib は disjoint なので borrow checker が許す）．
-                    let row = &mut self.chain.contrib[k * n..(k + 1) * n];
-                    for ((r, g), &gn) in self.chain.resid.iter_mut().zip(row).zip(&self.scratch) {
-                        *r += *g - gn;
-                        *g = gn;
-                    }
-                    self.chain.sse = sse_new;
-                    self.chain.peaks[k] = cand;
+                    self.commit(k, cand, sse_new);
                     self.acc[j] += 1;
                 }
             }
@@ -555,6 +592,50 @@ mod tests {
         let incremental = slot.chain.sse;
         slot.chain.recompute(&x, &y);
         assert!((incremental - slot.chain.sse).abs() <= 1e-9 * slot.chain.sse.max(1.0));
+    }
+
+    /// β = 0 のスロットは事前分布から独立に引き直す．
+    /// 差分更新した SSE が再計算値と一致し，サンプルが事前分布の平均を再現し，
+    /// 連続するスイープのエネルギーに相関がないこと（ランダムウォーク Metropolis なら lag-1 相関は 0.8 程度）．
+    #[test]
+    fn beta_zero_slot_draws_independently_from_prior() {
+        let (x, y, prior) = toy_data();
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let peaks = (0..2).map(|_| prior.sample_peak(&mut rng)).collect();
+        let mut slot = Slot::new(0.0, Chain::new(peaks, &x, &y), rng, prior.initial_steps());
+
+        let n_sweep = 20_000;
+        let mut energies = Vec::with_capacity(n_sweep);
+        let (mut sum_a, mut sum_mu, mut sum_b) = (0.0, 0.0, 0.0);
+        for _ in 0..n_sweep {
+            slot.sweep(&x, &prior);
+            energies.push(slot.chain.energy());
+            for p in &slot.chain.peaks {
+                sum_a += p.a;
+                sum_mu += p.mu;
+                sum_b += p.b;
+            }
+        }
+
+        let incremental = slot.chain.sse;
+        slot.chain.recompute(&x, &y);
+        assert!((incremental - slot.chain.sse).abs() <= 1e-9 * slot.chain.sse.max(1.0));
+
+        // 平均の標準誤差は a: 0.005，μ: 0.004，b: 0.1 程度（4 万本）
+        let m = (n_sweep * 2) as f64;
+        assert!((sum_a / m - 1.0 / prior.a_rate).abs() < 0.03);
+        assert!((sum_mu / m - 0.5 * (prior.mu_lo + prior.mu_hi)).abs() < 0.03);
+        assert!((sum_b / m - prior.b_shape / prior.b_rate).abs() < 1.0);
+
+        let mean = energies.iter().sum::<f64>() / n_sweep as f64;
+        let d: Vec<f64> = energies.iter().map(|e| e - mean).collect();
+        let c0: f64 = d.iter().map(|v| v * v).sum();
+        let c1: f64 = d.iter().zip(&d[1..]).map(|(u, v)| u * v).sum();
+        assert!(
+            (c1 / c0).abs() < 0.05,
+            "lag-1 autocorrelation = {}",
+            c1 / c0
+        );
     }
 
     /// スレッド数を変えても結果がビット単位で一致すること（逆温度列の調整あり・なしの両方）
