@@ -15,3 +15,4 @@ CSV（`data.csv`，`free_energy.csv`）は `.gitignore` で除外されている
 | 2026-11-15 | [ladder-adapt](2026-11-15_ladder-adapt/README.md) | 逆温度列の適応と β̂ の補間を入れて再実行．β̂ が 95〜106 の連続値に |
 | 2026-11-16 | [n-scan](2026-11-16_n-scan/README.md) | n = 101〜10001．F(4)−F(3) は log n に傾き 0.22 で増加（正則なら 1.5）．n ≥ 1001 でほぼ K = 3 |
 | 2026-11-17 | [mixing-diag](2026-11-17_mixing-diag/README.md) | エネルギーの τ_int は β ≤ 400 で 3〜9 スイープ．K = 5 は β ≳ 450 で数百〜1400（F(β̂) には影響しない） |
+| 2026-11-17 | [beta0-prior](2026-11-17_beta0-prior/README.md) | β_0 を事前分布から独立に引き直す．β_0 の τ_int 6〜11 → 1，F の平均は不変，K = 1 の seed 間の揺らぎが約半分に |
