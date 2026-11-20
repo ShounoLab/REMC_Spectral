@@ -22,7 +22,13 @@
     # n: データ点数（[0, 3] を等間隔），n_replica: レプリカ数
     RAYON_NUM_THREADS=8 cargo run --release      # スレッド数の指定
 
-出力: `data.csv`（人工データ），`free_energy.csv`（K, β, F, ⟨nE⟩, 交換率）
+出力（カレントディレクトリ）:
+
+- `data.csv`: 人工データ（x, y）
+- `free_energy.csv`: 逆温度列の格子点ごとの値（K, β, F, ⟨nE⟩, 交換率）
+- `free_energy_fine.csv`: 格子点の間を再重み付け（`remc::log_z_at`）で補間した F(β)．
+  [β_1, β_max] を対数等間隔に 201 点（K, β, F）
+- `model_selection.csv`: K ごとの β̂，σ̂ = 1/√β̂，F_min = F(β̂)，ΔF = F_min − min_K F_min
 
 ## ピークの形
 
