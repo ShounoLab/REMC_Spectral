@@ -5,6 +5,9 @@
 //! seed は交換モンテカルロの乱数，data_seed は人工データの雑音の乱数に使う．
 //! n はデータ点数（観測範囲 [0, 3] を等間隔に取る），n_replica はレプリカ数．
 //! スレッド数は環境変数 RAYON_NUM_THREADS で指定（未指定なら論理コア数）．
+//!
+//! 出力: data.csv（人工データ），free_energy.csv（格子点ごとの F），
+//! free_energy_fine.csv（格子点の間を再重み付けで補間した F(β)），model_selection.csv（K ごとの β̂ と F_min）．
 
 use remc_spectral::{model, remc};
 
@@ -14,6 +17,9 @@ use rand_chacha::ChaCha8Rng;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
+
+/// free_energy_fine.csv で F(β) を求める β の点数（[β_1, β_max] を対数等間隔に取る）．
+const N_FINE_CURVE: usize = 200;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -95,6 +101,8 @@ fn main() -> std::io::Result<()> {
 
     let mut csv = BufWriter::new(File::create("free_energy.csv")?);
     writeln!(csv, "K,beta,F,mean_nE,exchange_rate")?;
+    let mut fine_csv = BufWriter::new(File::create("free_energy_fine.csv")?);
+    writeln!(fine_csv, "K,beta,F")?;
 
     let mut best: Option<(usize, f64, f64)> = None; // (K, F_min, β̂)
     let mut results = Vec::new();
@@ -139,6 +147,18 @@ fn main() -> std::io::Result<()> {
             writeln!(csv, "{k},{beta},{fl},{mean_e},{ex}")?;
         }
 
+        // 格子点の間も含めた F(β) の曲線．β_0 = 0 では F が発散するので β_1 から取る．
+        let (b_lo, b_hi) = (res.betas[1], *res.betas.last().unwrap());
+        let (llo, lhi) = (b_lo.ln(), b_hi.ln());
+        for i in 0..=N_FINE_CURVE {
+            let beta = (llo + (lhi - llo) * i as f64 / N_FINE_CURVE as f64)
+                .exp()
+                .clamp(b_lo, b_hi);
+            let fb = 0.5 * n as f64 * (2.0 * std::f64::consts::PI / beta).ln()
+                - remc::log_z_at(&res.betas, &res.energies, &lz, beta);
+            writeln!(fine_csv, "{k},{beta},{fb}")?;
+        }
+
         let improved = match best {
             Some((_, f_best, _)) => f_min < f_best,
             None => true,
@@ -146,19 +166,28 @@ fn main() -> std::io::Result<()> {
         if improved {
             best = Some((k, f_min, beta_hat));
         }
-        results.push((res, l_hat, f_min));
+        results.push((res, l_hat, f_min, beta_hat));
     }
 
     // ---- 最小値からの差 ΔF(K)．1 nat 程度の差はモデル選択の根拠としては弱い ----
     let f_best = best.unwrap().1;
+    let mut sel_csv = BufWriter::new(File::create("model_selection.csv")?);
+    writeln!(sel_csv, "K,beta_hat,sigma_hat,F_min,delta_F")?;
     println!("\nDelta F (K) = F_min(K) - min_K F_min(K):");
-    for (k, (_, _, fm)) in results.iter().enumerate() {
+    for (k, (_, _, fm, bh)) in results.iter().enumerate() {
         println!("  K={}: {:8.3}", k + 1, fm - f_best);
+        writeln!(
+            sel_csv,
+            "{},{bh},{},{fm},{}",
+            k + 1,
+            1.0 / bh.sqrt(),
+            fm - f_best
+        )?;
     }
 
     // ---- 選ばれたモデルの事後平均（β̂ のスロットのサンプルから） ----
     let (k_hat, _, beta_hat) = best.unwrap();
-    let (res, l_hat, _) = &results[k_hat - 1];
+    let (res, l_hat, _, _) = &results[k_hat - 1];
     println!("\nargmin K = {k_hat}, beta_hat = {beta_hat:.2}");
     println!(
         "posterior mean ± sd at grid beta = {:.2} nearest to the F minimum (peaks sorted by center):",
@@ -184,6 +213,6 @@ fn main() -> std::io::Result<()> {
         Gauss::PARAM_NAMES.join(", "),
         res.acceptance[*l_hat]
     );
-    println!("\nwrote free_energy.csv");
+    println!("\nwrote free_energy.csv, free_energy_fine.csv, model_selection.csv");
     Ok(())
 }
