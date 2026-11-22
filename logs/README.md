@@ -16,3 +16,5 @@ CSV（`data.csv`，`free_energy.csv`）は `.gitignore` で除外されている
 | 2026-11-16 | [n-scan](2026-11-16_n-scan/README.md) | n = 101〜10001．F(4)−F(3) は log n に傾き 0.22 で増加（正則なら 1.5）．n ≥ 1001 でほぼ K = 3 |
 | 2026-11-17 | [mixing-diag](2026-11-17_mixing-diag/README.md) | エネルギーの τ_int は β ≤ 400 で 3〜9 スイープ．K = 5 は β ≳ 450 で数百〜1400（F(β̂) には影響しない） |
 | 2026-11-17 | [beta0-prior](2026-11-17_beta0-prior/README.md) | β_0 を事前分布から独立に引き直す．β_0 の τ_int 6〜11 → 1，F の平均は不変，K = 1 の seed 間の揺らぎが約半分に |
+| 2026-11-22 | [model-selection-csv](2026-11-22_model-selection-csv/README.md) | PR #1 の補間曲線とモデル選択の CSV は整合．格子だけの最小は F_min から最大 0.49 ずれる（K の差と同程度） |
+| 2026-11-22 | [var-check](2026-11-22_var-check/README.md) | `var_nE` 列を追加．Δ⟨nE⟩ / (−∫Var dβ) は交換率 ≥ 0.3 の区間で 0.81〜1.11，交換が詰まった区間だけ 3.1〜3.7 |

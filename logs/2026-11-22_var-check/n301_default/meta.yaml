@@ -1,0 +1,59 @@
+# remc-spectral の実行のメタ情報．CSV の列の意味は README.md の「出力」を参照．
+format_version: 1
+provenance:
+  commit: "4d5263af1fb424b83cc7632080eb957be5361fae"
+  dirty: true
+  version: "0.1.0"
+  started_utc: "2026-11-22T14:29:32Z"
+  elapsed_s: 11.398564458
+  command: ["./target/release/remc-spectral", "--out-dir", "logs/2026-11-22_var-check/n301_default"]
+  threads: 10
+  os: "macos"
+  arch: "aarch64"
+data:
+  kind: "synthetic"
+  file: "data.csv"
+  n: 301
+  x_range: [0.0, 3.0]
+  sigma: 0.1
+  data_seed: 20120401
+  truth_shape: "Gauss"
+  truth:
+    - {a: 1.0, mu: 1.0, b: 44.44444444444444}
+    - {a: 0.8, mu: 1.4, b: 44.44444444444444}
+    - {a: 1.2, mu: 2.2, b: 24.999999999999996}
+model:
+  shape: "Gauss"
+  k_max: 5
+prior:
+  a_rate: 1.0
+  mu_lo: 0.0
+  mu_hi: 3.0
+  b_shape: 2.0
+  b_rate: 0.06666666666666667
+config:
+  n_replica: 40
+  beta_min: 0.01
+  beta_max: 1000.0
+  burn_in: 10000
+  n_sample: 20000
+  adapt_interval: 100
+  target_acc: 0.4
+  recompute_interval: 1000
+  thin: 10
+  seed: 42
+  ladder_interval: 250
+  n_fine_curve: 200
+results:
+  files:
+    grid: "free_energy.csv"
+    fine: "free_energy_fine.csv"
+    model_selection: "model_selection.csv"
+  k_hat: 4
+  beta_hat: 95.26700412762862
+  per_k:
+    - {K: 1, exchange_min: 0.7782, exchange_max: 0.8553, elapsed_s: 1.086528167}
+    - {K: 2, exchange_min: 0.7103, exchange_max: 0.7914, elapsed_s: 1.7170010420000001}
+    - {K: 3, exchange_min: 0.6683, exchange_max: 0.7779, elapsed_s: 2.335325583}
+    - {K: 4, exchange_min: 0.6432, exchange_max: 0.7536, elapsed_s: 2.850581417}
+    - {K: 5, exchange_min: 0.6502, exchange_max: 0.7517, elapsed_s: 3.364632167}

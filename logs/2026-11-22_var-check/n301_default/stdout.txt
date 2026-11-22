@@ -1,0 +1,25 @@
+threads = 10, N = 301, L = 40, sweeps = 10000 + 20000
+true sigma = 0.1  (true beta = 100.0), seed = 42, data_seed = 20120401
+
+K=1: F_min =    89.898 at beta =    10.12 (sigma_hat = 0.3143), exchange rate = [0.778, 0.855], 1.1 s
+K=2: F_min =  -167.661 at beta =    59.79 (sigma_hat = 0.1293), exchange rate = [0.710, 0.791], 1.7 s
+K=3: F_min =  -228.620 at beta =    94.66 (sigma_hat = 0.1028), exchange rate = [0.668, 0.778], 2.3 s
+K=4: F_min =  -229.119 at beta =    95.27 (sigma_hat = 0.1025), exchange rate = [0.643, 0.754], 2.9 s
+K=5: F_min =  -228.630 at beta =    95.36 (sigma_hat = 0.1024), exchange rate = [0.650, 0.752], 3.4 s
+
+Delta F (K) = F_min(K) - min_K F_min(K):
+  K=1:  319.017
+  K=2:   61.458
+  K=3:    0.499
+  K=4:    0.000
+  K=5:    0.489
+
+argmin K = 4, beta_hat = 95.27
+posterior mean ± sd at grid beta = 87.69 nearest to the F minimum (peaks sorted by center):
+  peak 0: a = 0.899±0.222, mu = 0.994±0.060, b = 41.419±7.604
+  peak 1: a = 0.666±0.224, mu = 1.340±0.130, b = 40.945±11.289
+  peak 2: a = 0.769±0.367, mu = 1.929±0.348, b = 32.766±14.203
+  peak 3: a = 0.634±0.493, mu = 2.333±0.215, b = 23.714±11.252
+acceptance (a, mu, b) at that grid beta: [0.42, 0.38, 0.42]
+
+wrote data.csv, free_energy.csv, free_energy_fine.csv, model_selection.csv, meta.yaml in logs/2026-11-22_var-check/n301_default
