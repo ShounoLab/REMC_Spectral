@@ -2,6 +2,7 @@
 //!
 //! - [`model`] … ピークの形のトレイト（[`model::PeakShape`]），ガウス型ピーク，事前分布，人工データ生成
 //! - [`remc`] … 交換モンテカルロ本体と自由エネルギー推定
+//! - [`yaml`] … 実行のメタ情報（`meta.yaml`）を書くための最小限の YAML 書き出し
 //!
 //! 参考文献:
 //! - K. Nagata, S. Sugita, M. Okada, "Bayesian spectral deconvolution with the
@@ -11,3 +12,4 @@
 
 pub mod model;
 pub mod remc;
+pub mod yaml;

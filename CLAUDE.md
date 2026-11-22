@@ -12,7 +12,7 @@
 - テスト: `cargo test`（`[profile.test]` で最適化済み．結合テストを含め数秒）
 - 整形・静的検査: `cargo fmt --all` / `cargo clippy --all-targets -- -D warnings`
 - ドキュメント: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
-- デモ実行: `cargo run --release -- [K_max] [n_sample] [seed] [data_seed] [n] [n_replica]`（スレッド数は `RAYON_NUM_THREADS`）
+- デモ実行: `cargo run --release -- [--out-dir DIR] [K_max] [n_sample] [seed] [data_seed] [n] [n_replica]`（スレッド数は `RAYON_NUM_THREADS`）
 
 変更を終えたら fmt・clippy・test がすべて通ることを確認する（CI と同じ条件）．
 
@@ -22,7 +22,10 @@
   `Chain`/`Slot`/`run` は `S: PeakShape` でジェネリック（`run::<Gauss>(…)`）．形を足すときは `PeakShape` を実装し，
   `model::tests::check_shape_contract` を通す
 - `src/remc.rs`: 交換モンテカルロ本体と自由エネルギー推定，単体テスト
-- `src/main.rs`: デモ用バイナリ（ライブラリを `remc_spectral::` 経由で使う）
+- `src/main.rs`: デモ用バイナリ（ライブラリを `remc_spectral::` 経由で使う）．CSV と `meta.yaml` を `--out-dir` に書く．
+  `Config` や `Prior` にフィールドを足したら `write_meta` にも足す（分解しているので漏れるとコンパイルエラーになる）
+- `src/yaml.rs`: `meta.yaml` 用の YAML 書き出し（依存なしの手書き．PyYAML で型が崩れない書き方に限る）
+- `build.rs`: コミットハッシュと dirty を `REMC_GIT_COMMIT`/`REMC_GIT_DIRTY` として埋め込む
 - `tests/free_energy.rs`: K = 1 の F(β) を格子数値積分と比較する結合テスト
 
 `Slot`（β・ステップ幅・RNG．温度に固定）と `Chain`（ピーク列・残差・SSE．温度間を移動）を分離し，
@@ -54,7 +57,8 @@
 - 作業を再開するとき（「続き」「前回の」などと言われたとき）は，まず `notes/README.md` の一覧から関連ノートと，
   `logs/README.md` の一覧を読み，経緯・未検証の仮説・未着手の候補を把握してから始める．
 - 実験を実行したら `logs/YYYY-MM-DD_名前/` に目的・コード版・コマンド・要約表・所見（`README.md`）と生出力を残し，
-  `logs/README.md` の一覧に 1 行足す．デモは CSV をカレントディレクトリに書くので，作業用ディレクトリで実行する．
+  `logs/README.md` の一覧に 1 行足す．デモは `--out-dir logs/YYYY-MM-DD_名前/<実行名>` のように出力先を指定して実行する
+  （出力先に `meta.yaml` があれば上書きせずに止まる）．
 - 会話で出たアイディアや仮説は `notes/` にテーマごとにまとめる．出どころ（[利用者]/[Claude]/[両者]）と
   状態（未着手/検討中/実装済み/却下）を付ける．書き方は `notes/README.md`．
 
