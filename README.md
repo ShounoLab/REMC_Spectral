@@ -81,7 +81,7 @@ DIR に次のファイルを書く．DIR に `meta.yaml` がすでにあれば�
 │   └── main.rs       デモ用バイナリ（K = 1..K_max の実行とモデル選択）
 ├── tests/
 │   └── free_energy.rs  結合テスト: K = 1 の自由エネルギーを格子数値積分と比較（逆温度列の適応あり・なし）
-├── logs/              実験の記録（実験ごとのフォルダに要約と生出力）
+├── logs/              実験の記録（実験ごとのフォルダに要約と生出力．実験の手順は logs/README.md）
 ├── notes/             会話で出たアイディア・仮説・検討中の設計のまとめ
 ├── .github/workflows/ci.yml  fmt / clippy / doc / test（Linux・macOS）
 ├── CLAUDE.md          Claude Code 向けのプロジェクト説明と不変条件

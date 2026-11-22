@@ -1,12 +1,64 @@
 # logs
 
-実験の記録．1 回のまとまった実験ごとに `YYYY-MM-DD_短い名前/` を作り，次を置く．
-
-- `README.md`: 目的，コード版（コミット），実行コマンド，結果の要約表，所見
-- 生の出力（`*.txt`）: デモの標準出力をそのまま保存したもの
-
-CSV（`data.csv`，`free_energy.csv`）は `.gitignore` で除外されているので，残したい数値は要約表に書く．
+実験の記録．1 回のまとまった実験ごとに `YYYY-MM-DD_短い名前/` を作る．
 考察やアイディアの議論は `notes/` に書き，ここには事実（何を実行して何が出たか）を残す．
+
+## フォルダの中身
+
+```
+logs/YYYY-MM-DD_名前/
+├── README.md        目的，コード版（コミット），実行コマンド，結果の要約表，所見
+├── <実行名>/         1 回の実行ごとに 1 つ（--out-dir の出力先）
+│   ├── meta.yaml    出どころ・設定・結果の要約（git で追跡する）
+│   ├── stdout.txt   デモの標準出力（git で追跡する）
+│   └── *.csv        data.csv，free_energy.csv など（.gitignore で除外．必要なら再生成する）
+└── *.py など        要約表を作るのに使った解析スクリプト（あれば）
+```
+
+CSV は git で追跡しない．残したい数値は README の要約表に書く．
+2026-11-21 以前の記録は，実行ごとのフォルダを作らず標準出力を `*.txt` で並べた古い形のまま．
+
+## 実験の手順
+
+1. **コードをコミットしてから実行する**．`meta.yaml` の `dirty: false` は，CSV をそのコミットから再生成できることの保証になる．
+   やむを得ず未コミットのコードで実行したら，README の「コード」欄に差分の内容と，のちにコミットしたハッシュを書く．
+2. **フォルダを作り，ビルドする**．
+   ```sh
+   cargo build --release
+   D=logs/$(date +%F)_名前
+   ```
+3. **実行する**．実行ごとにサブフォルダを分け，標準出力もそこに保存する．
+   ```sh
+   for ds in 1 2 3; do
+     mkdir -p $D/ds$ds
+     ./target/release/remc-spectral --out-dir $D/ds$ds 5 20000 42 $ds > $D/ds$ds/stdout.txt
+   done
+   ```
+   出力先にすでに `meta.yaml` があると上書きせずに止まる．やり直すときはそのサブフォルダを消してから実行する．
+4. **不調な実行がないか確かめる**．`meta.yaml` の `dirty` と `results.per_k` の `exchange_min`（目安 0.3 以上）を見る．
+   交換が詰まった区間は `free_energy.csv` の `var_nE` でも検出できる（[var-check](2026-11-22_var-check/README.md) の `varcheck.py`）．
+5. **README.md を書く**．目的，コード版，コマンド，要約表，所見．解析に使ったスクリプトは同じフォルダに置く．
+   図を描いたら，描画用リポジトリのどの notebook（とそのコミット）で描いたかを書く．
+6. **この表に 1 行足す**．
+7. **コミットする**．コードの変更とは別のコミットにする（コードを先にコミットし，そのハッシュを README に書く）．
+
+## CSV の再生成
+
+CSV は追跡しないので，描画などで必要になったら `meta.yaml` の `provenance.commit` と `provenance.command` から作り直す．
+
+```sh
+c=<provenance.commit>
+git worktree add ../remc-$c $c
+(cd ../remc-$c && cargo build --release)
+../remc-$c/target/release/remc-spectral --out-dir <新しい出力先> <command の引数（--out-dir 以外）>
+git worktree remove ../remc-$c
+```
+
+- 結果はスレッド数によらずビット単位で再現する．ただし `exp` などの最後のビットは OS によって違いうるので，
+  別の OS では値がわずかにずれることがある．正しい値は README の要約表と `meta.yaml` の結果を基準にする．
+- `dirty: true` の実行は，README の「コード」欄にあるコミット（と差分の説明）から作り直す．
+
+## 一覧
 
 | 日付 | 実験 | 要点 |
 |---|---|---|
